@@ -42,7 +42,7 @@ function guardEvents(projectDir, sessionId) {
     }
     if (sessionId && e.session !== sessionId) continue;
     if (e.event === 'read_guard') e.action === 'deny' ? counts.narrowed++ : counts.shadowReads++;
-    if (e.event === 'rollover' && e.action === 'block') counts.rollovers++;
+    if ((e.event === 'rollover' && e.action === 'handoff') || (e.event === 'prompt_guard' && e.action === 'block')) counts.rollovers++;
     if (e.event === 'handoff_loaded') counts.handoffs++;
   }
   return counts;
@@ -75,6 +75,7 @@ function report(transcriptPath, projectDir, sessionId) {
     filesRead: files.size,
     linesRead: lines,
     rangedReads: ranged,
+    readsFailed: s.readsFailed,
     compactions: s.compactions,
     guard: g,
     text: [
@@ -84,8 +85,9 @@ function report(transcriptPath, projectDir, sessionId) {
       `Input processed  ${fmt(totalIn)} (new ${fmt(s.input)} · cache write ${fmt(s.cacheWrite)} · cache read ${fmt(s.cacheRead)})`,
       `Output           ${fmt(s.output)}`,
       `Tool calls       ${s.toolCalls}${byTool ? ` (${byTool})` : ''}`,
-      `Reads            ${s.reads.length} of ${files.size} files, ~${lines} lines (ranged ${ranged} · full ${s.reads.length - ranged})`,
-      `Guard            ${g.narrowed} reads narrowed · ${g.rollovers} rollovers · ${g.handoffs} handoffs loaded` +
+      `Reads            ${s.reads.length} of ${files.size} files, ~${lines} lines (ranged ${ranged} · full ${s.reads.length - ranged})` +
+        (s.readsFailed ? ` · ${s.readsFailed} denied/failed not counted` : ''),
+      `Guard            ${g.narrowed} reads narrowed · ${g.rollovers} hand-offs · ${g.handoffs} handoffs loaded` +
         (g.shadowReads ? ` · ${g.shadowReads} shadow` : ''),
       s.compactions ? `Compactions      ${s.compactions}` : null,
     ]

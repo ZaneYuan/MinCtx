@@ -55,33 +55,86 @@ test('prompt-submit: below soft limit is silent', () => {
   assert.strictEqual(last.transcriptPath, transcript);
 });
 
-test('prompt-submit: soft limit nudges once per session', () => {
-  const { d, transcript } = project(120000);
-  const r1 = runHook('prompt-submit', prompt(d, transcript, 'next'), { projectDir: d });
-  assert.match(r1.json.systemMessage, /soft limit/);
-  assert.match(r1.json.hookSpecificOutput.additionalContext, /minctx\.js" checkpoint/);
-  const r2 = runHook('prompt-submit', prompt(d, transcript, 'next again'), { projectDir: d });
-  assert.strictEqual(r2.stdout, '');
+const stopIn = (d, transcript, sid = 'S1', active = false) => ({
+  session_id: sid, transcript_path: transcript, cwd: d, hook_event_name: 'Stop', stop_hook_active: active,
 });
 
-test('prompt-submit: hard limit blocks the prompt and saves a handoff with it', () => {
-  const { d, transcript } = project(160000);
+test('stop: below the heads-up threshold is silent', () => {
+  const { d, transcript } = project(200000);
+  assert.strictEqual(runHook('stop', stopIn(d, transcript), { projectDir: d }).stdout, '');
+});
+
+test('stop: heads-up once at 80% of the limit', () => {
+  const { d, transcript } = project(380000);
+  const r1 = runHook('stop', stopIn(d, transcript), { projectDir: d });
+  assert.match(r1.json.systemMessage, /380K tokens \(hand-off at 450K\)/);
+  assert.strictEqual(r1.json.decision, undefined, 'never blocks at the heads-up');
+  assert.strictEqual(runHook('stop', stopIn(d, transcript), { projectDir: d }).stdout, '');
+});
+
+test('stop: at the limit, asks for one state refresh, then writes the handoff after the turn', () => {
+  const { d, transcript } = project(460000);
+  const r1 = runHook('stop', stopIn(d, transcript), { projectDir: d });
+  assert.strictEqual(r1.json.decision, 'block');
+  assert.match(r1.json.reason, /Rewrite \.minctx\/state\.md/);
+  assert.ok(!fs.existsSync(path.join(d, '.minctx', 'handoff.md')));
+
+  // Claude updates state.md, stops again (stop_hook_active) -> handoff, turn ends normally.
+  fs.writeFileSync(path.join(d, '.minctx', 'state.md'), 'goal: fix delete\nnext: audit log\n');
+  const r2 = runHook('stop', stopIn(d, transcript, 'S1', true), { projectDir: d });
+  assert.strictEqual(r2.json.decision, undefined);
+  assert.match(r2.json.systemMessage, /this turn finished at 460K/);
+  assert.match(r2.json.systemMessage, /\/clear/);
+  const h = fs.readFileSync(path.join(d, '.minctx', 'handoff.md'), 'utf8');
+  assert.match(h, /goal: fix delete/);
+  assert.match(h, /src[\\/]Svc\.cs/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(d, '.minctx', 'handoff.json'), 'utf8')).reason, 'turn-end');
+
+  // Later turn ends (user chose to continue with ++): refresh the handoff, never ask again.
+  const r3 = runHook('stop', stopIn(d, transcript), { projectDir: d });
+  assert.strictEqual(r3.json.decision, undefined);
+  assert.match(r3.json.systemMessage, /Handoff saved/);
+});
+
+test('stop: refreshState false writes the handoff directly', () => {
+  const { d, transcript } = project(460000);
+  writeConfig(d, { rollover: { refreshState: false } });
+  const r = runHook('stop', stopIn(d, transcript), { projectDir: d });
+  assert.strictEqual(r.json.decision, undefined);
+  assert.ok(fs.existsSync(path.join(d, '.minctx', 'handoff.md')));
+});
+
+test('stop: shadow mode only logs', () => {
+  const { d, transcript } = project(460000);
+  writeConfig(d, { mode: 'shadow' });
+  assert.strictEqual(runHook('stop', stopIn(d, transcript), { projectDir: d }).stdout, '');
+  assert.strictEqual(runHook('stop', stopIn(d, transcript), { projectDir: d }).stdout, '');
+  assert.deepStrictEqual(readLog(d).map((e) => e.action), ['shadow']);
+});
+
+test('prompt-submit: never acts below the limit (no mid-task interference)', () => {
+  const { d, transcript } = project(440000);
+  assert.strictEqual(runHook('prompt-submit', prompt(d, transcript, 'next'), { projectDir: d }).stdout, '');
+});
+
+test('prompt-submit: over the limit, the next prompt is held and saved into the handoff', () => {
+  const { d, transcript } = project(460000);
   fs.mkdirSync(path.join(d, '.minctx'), { recursive: true });
   fs.writeFileSync(path.join(d, '.minctx', 'state.md'), 'goal: fix delete\nnext: mixed-member test\n');
   const r = runHook('prompt-submit', prompt(d, transcript, 'now add the audit log'), { projectDir: d });
   assert.strictEqual(r.json.decision, 'block');
-  assert.match(r.json.reason, /160K/);
+  assert.match(r.json.reason, /460K/);
+  assert.match(r.json.reason, /NOT sent/);
   const h = fs.readFileSync(path.join(d, '.minctx', 'handoff.md'), 'utf8');
   assert.match(h, /goal: fix delete/);
   assert.match(h, /now add the audit log/);
-  assert.match(h, /src[\\/]Svc\.cs/);
   assert.ok(h.includes(transcript));
   assert.ok(!h.includes('Fix DeleteMember in NeedAnalysisService'), 'state.md replaces prompt history');
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(d, '.minctx', 'handoff.json'), 'utf8')).pending, true);
 });
 
 test('prompt-submit: slash commands, override prefix and shadow mode are not blocked', () => {
-  const { d, transcript } = project(160000);
+  const { d, transcript } = project(460000);
   assert.strictEqual(runHook('prompt-submit', prompt(d, transcript, '/clear'), { projectDir: d }).stdout, '');
   assert.strictEqual(runHook('prompt-submit', prompt(d, transcript, '++ one more thing'), { projectDir: d }).stdout, '');
   writeConfig(d, { mode: 'shadow' });
@@ -89,14 +142,15 @@ test('prompt-submit: slash commands, override prefix and shadow mode are not blo
   assert.deepStrictEqual(readLog(d).map((e) => e.action), ['override', 'shadow']);
 });
 
-test('prompt-submit: limits are configurable (e.g. 400K on a 1M window)', () => {
-  const { d, transcript } = project(300000);
-  writeConfig(d, { rollover: { softTokens: 350000, hardTokens: 400000 } });
+test('limits are configurable (e.g. 150K on a 200K window)', () => {
+  const { d, transcript } = project(160000);
   assert.strictEqual(runHook('prompt-submit', prompt(d, transcript, 'go'), { projectDir: d }).stdout, '');
+  writeConfig(d, { rollover: { hardTokens: 150000 } });
+  assert.strictEqual(runHook('prompt-submit', prompt(d, transcript, 'go'), { projectDir: d }).json.decision, 'block');
 });
 
 test('session-start: injects protocol, then the pending handoff exactly once', () => {
-  const { d, transcript } = project(160000);
+  const { d, transcript } = project(460000);
   runHook('prompt-submit', prompt(d, transcript, 'now add the audit log', 'OLD'), { projectDir: d });
 
   const s1 = runHook('session-start', { session_id: 'NEW', source: 'clear', cwd: d }, { projectDir: d });
@@ -112,7 +166,7 @@ test('session-start: injects protocol, then the pending handoff exactly once', (
 });
 
 test('session-start: resume is silent; handoff is not re-injected into its own session', () => {
-  const { d, transcript } = project(160000);
+  const { d, transcript } = project(460000);
   runHook('prompt-submit', prompt(d, transcript, 'x', 'S1'), { projectDir: d });
   assert.strictEqual(runHook('session-start', { session_id: 'S1', source: 'resume', cwd: d }, { projectDir: d }).stdout, '');
   const r = runHook('session-start', { session_id: 'S1', source: 'compact', cwd: d }, { projectDir: d });
@@ -126,7 +180,7 @@ test('session-start: .minctx is self-gitignored', () => {
 });
 
 test('mode off disables every hook', () => {
-  const { d, transcript } = project(160000);
+  const { d, transcript } = project(460000);
   const env = { MINCTX_MODE: 'off' };
   assert.strictEqual(runHook('prompt-submit', prompt(d, transcript, 'x'), { projectDir: d, env }).stdout, '');
   assert.strictEqual(runHook('session-start', { session_id: 'S', source: 'startup', cwd: d }, { projectDir: d, env }).stdout, '');
@@ -160,4 +214,41 @@ test('stats CLI reports the last session', () => {
   assert.strictEqual(r.status, 0, r.stderr);
   assert.match(r.stdout, /Context now\s+90K/);
   assert.match(r.stdout, /Tool calls\s+1 \(Edit 1\)/);
+});
+
+test('pre-tool: PowerShell Get-Content of a large file is denied; bounded reads pass', () => {
+  const d = tmpDir();
+  bigFile(d, 'big.js', 1000);
+  const run = (command) => runHook('pre-tool', { cwd: d, tool_name: 'PowerShell', tool_input: { command } }, { projectDir: d });
+  assert.strictEqual(run('Get-Content big.js').json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.strictEqual(run('gc -Path "big.js"').json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.strictEqual(run('type big.js').json.hookSpecificOutput.permissionDecision, 'deny');
+  assert.strictEqual(run('Get-Content big.js -TotalCount 80').stdout, '');
+  assert.strictEqual(run('Get-Content big.js | Select-String helper').stdout, '');
+});
+
+test('limit CLI shows and sets the per-project hand-off limit', () => {
+  const d = tmpDir();
+  const run = (...args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'minctx.js'), 'limit', ...args], { cwd: d, encoding: 'utf8', env: { ...process.env, HOME: d } });
+  assert.match(run().stdout, /hand-off at 450K tokens, heads-up at 360K/);
+  assert.match(run('200k').stdout, /hand-off at 200K tokens, heads-up at 160K/);
+  const cfg = JSON.parse(fs.readFileSync(path.join(d, '.minctx', 'config.json'), 'utf8'));
+  assert.strictEqual(cfg.rollover.hardTokens, 200000);
+  assert.match(run('off').stdout, /automatic hand-off is off/);
+  assert.match(run('on').stdout, /hand-off at 200K/);
+  const bad = run('lots');
+  assert.strictEqual(bad.status, 1);
+  assert.match(bad.stdout, /not a valid limit/);
+});
+
+test('stats: reads denied by the guard are not counted as reads', () => {
+  const { d, transcript } = project(90000, [
+    T.assistant(T.usage(91000), [T.toolUse('r1', 'Read', { file_path: '/p/big.js' })]),
+    T.toolResult('r1', 'MinCtx: big.js has 1020 lines', true),
+    T.assistant(T.usage(92000), [T.toolUse('r2', 'Read', { file_path: '/p/big.js', offset: 100, limit: 3 })]),
+    T.toolResult('r2', 'a\nb\nc'),
+  ]);
+  runHook('prompt-submit', prompt(d, transcript, 'x'), { projectDir: d });
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'stats.js')], { cwd: d, encoding: 'utf8', env: { ...process.env, HOME: d } });
+  assert.match(r.stdout, /Reads\s+1 of 1 files, ~3 lines \(ranged 1 · full 0\) · 1 denied\/failed not counted/);
 });

@@ -97,6 +97,7 @@ function summarize(file) {
     prompts: [],
     modified: [],
     reads: [],
+    readsFailed: 0,
     commands: [],
     toolCalls: 0,
     toolCallsByName: {},
@@ -145,7 +146,7 @@ function summarize(file) {
           const f = inp.file_path || inp.notebook_path;
           if (f) modified.add(f);
         } else if (c.name === 'Read' && inp.file_path) {
-          const r = { file: inp.file_path, ranged: inp.offset != null || inp.limit != null, lines: 0 };
+          const r = { file: inp.file_path, ranged: inp.offset != null || inp.limit != null, lines: 0, error: false };
           s.reads.push(r);
           pending.set(c.id, r);
         } else if (c.name === 'Bash' && inp.command) {
@@ -161,11 +162,14 @@ function summarize(file) {
         if (!c || c.type !== 'tool_result' || !pending.has(c.tool_use_id)) continue;
         const r = pending.get(c.tool_use_id);
         pending.delete(c.tool_use_id);
-        if ('lines' in r) r.lines = resultText(c.content).split('\n').length;
+        if ('lines' in r && c.is_error !== true) r.lines = resultText(c.content).split('\n').length;
         if ('error' in r) r.error = c.is_error === true;
       }
     }
   }
+  // A denied (e.g. by the read guard) or failed read put nothing useful into context.
+  s.readsFailed = s.reads.filter((r) => r.error).length;
+  s.reads = s.reads.filter((r) => !r.error);
   s.modified = [...modified];
   s.tests = s.commands.filter((c) => TEST_RE.test(c.command));
   return s;

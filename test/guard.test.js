@@ -85,3 +85,31 @@ test('markdown outline skips fenced code blocks', () => {
   const md = '# A\n```sh\n# not a heading\n```\n## B\n';
   assert.deepStrictEqual(outline(md, 40, '.md'), ['L1: # A', 'L5: ## B']);
 });
+
+test('bash readers: span-aware for cat -n, nl, head, tail, sed', () => {
+  const d = tmpDir();
+  bigFile(d, 'big.js', 1000); // 1020 lines
+  const deny = (command) => assert.ok(checkBash({ command }, d, cfg), `should deny: ${command}`);
+  const allow = (command) => assert.strictEqual(checkBash({ command }, d, cfg), null, `should allow: ${command}`);
+  deny('cat -n big.js');
+  deny('nl big.js');
+  deny('head -n 5000 big.js');
+  deny('head -2000 big.js');
+  deny('tail -n +1 big.js');
+  deny("sed -n '1,2000p' big.js");
+  deny("sed -n '100,$p' big.js");
+  allow('head -n 80 big.js');
+  allow('head big.js');
+  allow('tail -n 50 big.js');
+  allow("sed -n '120,200p' big.js");
+  allow("sed 's/a/b/' big.js");
+  allow('cat -n big.js | sed -n 100,200p');
+  allow('grep -n helper big.js');
+});
+
+test('outline truncation says how many entries were left out', () => {
+  const d = tmpDir();
+  const f = bigFile(d, 'big.js', 3000); // 60 functions
+  const hit = checkRead({ file_path: f }, d, { ...cfg, readGuard: { ...cfg.readGuard, outlineEntries: 10 } });
+  assert.match(hit.reason, /\.\.\.50 more entries after L\d+ not shown/);
+});

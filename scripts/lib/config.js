@@ -14,9 +14,13 @@ const DEFAULTS = {
   },
   rollover: {
     enabled: true,
-    // Context size (tokens) of the last request. Soft: nudge to checkpoint. Hard: block and hand off.
-    softTokens: 100000,
-    hardTokens: 150000,
+    // Context size (tokens) of the last request. Checked when a turn ends, never mid-turn.
+    // Hard: hand off to a fresh session. Soft: one early heads-up. softTokens null = softRatio * hard.
+    hardTokens: 450000,
+    softTokens: null,
+    softRatio: 0.8,
+    // At the hard limit, ask Claude for one short state.md refresh before the handoff is written.
+    refreshState: true,
     // Prompts starting with this prefix bypass the hard limit once.
     overridePrefix: '++',
     // A pending handoff older than this is ignored at session start.
@@ -49,10 +53,20 @@ function readJson(file) {
 
 // Precedence: defaults < ~/.minctx/config.json < <project>/.minctx/config.json < MINCTX_MODE env.
 function loadConfig(projectDir) {
-  let cfg = merge(DEFAULTS, readJson(path.join(os.homedir(), '.minctx', 'config.json')));
+  let cfg = merge(JSON.parse(JSON.stringify(DEFAULTS)), readJson(path.join(os.homedir(), '.minctx', 'config.json')));
   if (projectDir) cfg = merge(cfg, readJson(path.join(projectDir, '.minctx', 'config.json')));
   if (process.env.MINCTX_MODE) cfg.mode = process.env.MINCTX_MODE;
+  const r = cfg.rollover;
+  if (!(r.softTokens > 0)) r.softTokens = Math.round(r.hardTokens * r.softRatio);
   return cfg;
 }
 
-module.exports = { DEFAULTS, loadConfig, merge, readJson };
+// "450k", "1m", "450000" -> tokens. Returns null when unparseable.
+function parseTokens(v) {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*([km]?)\s*$/i.exec(String(v));
+  if (!m) return null;
+  const n = Number(m[1]) * ({ k: 1e3, m: 1e6 }[m[2].toLowerCase()] || 1);
+  return Math.round(n);
+}
+
+module.exports = { DEFAULTS, loadConfig, merge, readJson, parseTokens };

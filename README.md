@@ -8,18 +8,28 @@
 >
 > The cheapest token is the token you never load.
 
+## 它帮你省在哪
+
+| 功能 | 你会看到什么 | 为什么省 |
+|---|---|---|
+| **长对话自动换新会话** | 一轮回答结束后提示：“上下文 460K，交接已保存，`/clear` 后发‘继续’” | 对话越长，每句话都要把全部历史重新算一遍钱。换新会话后只带一张 1–2K 的交接纸条，之后每句话都便宜 |
+| **不打断正在做的事** | Claude 干活途中不会被中断，这一轮做完才检查 | 这一轮的输入已经花掉了，中途打断既浪费又会丢进度 |
+| **最贵的那句话不发出去** | 超过上限后，你没换会话就发的下一句会被拦下，并自动存进交接 | 这一次一分钱不花，换会话后照样执行 |
+| **大文件不整个读** | Claude 想读上千行的文件时，先拿到一份“目录”（每个函数在第几行），再只读需要的几十行 | 少读的内容，之后每一轮都不用再背着 |
+| **少绕路、少啰嗦** | Claude 不为了“了解项目”乱翻文件，不说开场白，不复述改动 | 输入和输出都更少（靠规则约束，不是强制） |
+| **随时看用量** | `/minctx:stats` | 看清钱花在哪 |
+
 ## 为什么是 Plugin 而不是 Skill
 
-Skill 只是"建议"。它能影响 Agent 之后的行为，但拦不住一次整文件读取，也没法在一次 400K 的请求发出之前把它截下来。所以 MinCtx 是一个 Plugin，里面组合了几种 Claude Code 原生能力：
+Skill 只是“建议”，拦不住一次整文件读取，也没法在一句贵消息发出前把它截下来。所以 MinCtx 是一个 Plugin，组合了几种 Claude Code 原生能力：
 
-| 问题 | 机制 | 实现 | 上下文成本 |
-|---|---|---|---|
-| READ LESS：读得太多 | 先定范围，先搜后读，只读最小范围 | `SessionStart` hook 注入协议（约 270 tokens，每个会话一次） | 极低 |
-| | 硬性拦截大文件的整文件读取，并附上文件大纲 | `PreToolUse` hook（Read、`cat`） | 0，只在拦截时返回提示 |
-| DO LESS / SAY LESS：做得太多、说得太多 | 最小正确改动（Ponytail 思路）；不说开场白、不复述 diff（Caveman 思路） | 同一份协议 | 同上 |
-| CARRY LESS：背着长会话反复烧 token | 增量维护一份小状态，到阈值自动 checkpoint，再接力到新会话，替代 `/compact` | `UserPromptSubmit` + `SessionStart` hooks | handoff 约 0.5K–2K tokens |
-
-`/minctx:checkpoint` 和 `/minctx:stats` 这两个 skill 设置了 `disable-model-invocation`，平时完全不占上下文。
+| 机制 | 实现 | 上下文成本 |
+|---|---|---|
+| 行为规范（少读 / 少做 / 少说 / 维护状态） | `SessionStart` hook 注入，约 270 tokens，每个会话一次 | 极低 |
+| 大文件读取拦截：Read、Bash（`cat`/`cat -n`/`nl`/`head`/`tail`/`sed -n`）、PowerShell（`Get-Content`/`gc`/`type`） | `PreToolUse` hook，按实际要读的行数判断，按范围读少量行照常放行 | 0，只在拦截时返回大纲 |
+| 本轮结束时检查上下文并交接 | `Stop` hook | 超限时多一步很小的 state.md 更新 |
+| 两轮之间拦下超限后的新消息 | `UserPromptSubmit` hook | 0 |
+| `/minctx:checkpoint`、`/minctx:stats`、`/minctx:limit` | 仅限用户调用的 skill | 平时不占上下文 |
 
 ## 安装
 
@@ -46,18 +56,17 @@ L2 Disposable       讨论过程 / 失败尝试 / 工具日志 → 直接丢弃�
 具体流程：
 
 1. **过程中**：Agent 在每个里程碑重写 `.minctx/state.md`（不超过 25 行：goal / done / decisions / blockers / next）。这是增量维护，不等到最后才一次性总结。
-2. **Soft limit**（默认 100K）：提醒一次，Agent 会在下一个自然任务边界主动 checkpoint，并建议你 `/clear`。
-3. **Hard limit**（默认 150K）：在你的下一条消息**发出之前**拦截。这条消息不会发送，所以不花钱；同时自动生成 `.minctx/handoff.md`，内容包括：
-   - state.md（没有 state.md 时，退回使用你发过的原始需求）
-   - 本会话修改过的文件列表（不含代码内容）
-   - 最后一次测试/构建命令及其结果
-   - 被拦下的那条消息
-   - 旧 transcript 的路径（可逆：需要某个细节时去 grep，而不是把 400K 重新灌回来）
-4. 你输入 `/clear`，新会话会自动加载 handoff；再发一句"继续"，Agent 就会处理被拦下的那条请求。
+2. **执行中绝不打断**：Claude 读文件、改代码、跑测试的过程中，MinCtx 不做任何事。
+3. **一轮结束时检查**（`Stop` hook）：
+   - 到上限的 80%（默认 360K）：提示一次，说明现在是换会话的好时机。
+   - 到上限（默认 450K）：让 Claude 顺手更新一次 `state.md`，这一步很小，旧内容基本都在缓存里。然后自动写好 `.minctx/handoff.md`，并提示你 `/clear`。
+4. **handoff 内容**：state.md（没写的话，退回使用你发过的原始需求）、本会话修改过的文件列表（不含代码内容）、最后一次测试/构建命令及结果，以及旧 transcript 路径（需要某个细节时去 grep，而不是把 450K 重新灌回来）。
+5. 你输入 `/clear`，新会话自动加载 handoff；发一句“继续”就接着做。
+6. **如果你没 `/clear` 就发了新消息**：这时上一轮已经结束，拦下它不会打断任何工作。这句话不会发出去、不花钱，而是存进 handoff，`/clear` 后发“继续”即可。想发给旧会话的话，在消息前加 `++` 放行一次。斜杠命令永远不会被拦截。
 
-如果确实想发给旧会话，在消息前加 `++` 即可放行一次。斜杠命令永远不会被拦截。
+随时可以手动接力：`/minctx:checkpoint`，然后 `/clear`。
 
-也可以随时手动接力：`/minctx:checkpoint`，然后 `/clear`。
+调整上限：`/minctx:limit 450k`（也支持 `1m`、`150k`、`off`、`on`），只对当前项目生效。200K 上下文窗口的模型建议设为 `150k`。
 
 ## 配置
 
@@ -69,8 +78,9 @@ L2 Disposable       讨论过程 / 失败尝试 / 工具日志 → 直接丢弃�
   "readGuard": { "enabled": true, "maxLines": 300, "outlineEntries": 40 },
   "rollover": {
     "enabled": true,
-    "softTokens": 100000,
-    "hardTokens": 150000,
+    "hardTokens": 450000,
+    "softRatio": 0.8,
+    "refreshState": true,
     "overridePrefix": "++",
     "handoffMaxAgeHours": 24
   },
@@ -79,7 +89,7 @@ L2 Disposable       讨论过程 / 失败尝试 / 工具日志 → 直接丢弃�
 ```
 
 - `mode`：`enforce`（拦截 / 阻止）、`shadow`（只记录"本来会做什么"，完全不改变行为）、`off`
-- 使用 1M 上下文的话，可以设为 `"softTokens": 300000, "hardTokens": 400000`。不过更早接力通常更省额度。
+- `softTokens` 不写时为 `hardTokens × softRatio`。`refreshState: false` 表示到上限时不让 Claude 更新 state.md，直接用已有信息写 handoff。
 - 所有状态都放在 `<项目>/.minctx/`，这个目录会自动 gitignore 自己。
 
 ## 如何确保"省"得对
@@ -131,20 +141,21 @@ Safe saving: PASS (quality held within 0pp, tokens saved)
 
 ```text
 MinCtx stats · session 6bfa5c84
-Context now      82.1K tokens (soft 100K · hard 150K)
+Context now      82.1K tokens (soft 360K · hard 450K)
 Requests         32
 Input processed  3.47M (new 64 · cache write 111.3K · cache read 3.36M)
 Output           53.1K
 Tool calls       36 (Bash 20, Write 10, Read 1, Edit 1)
 Reads            1 of 1 files, ~1250 lines (ranged 0 · full 1)
-Guard            2 reads narrowed · 0 rollovers · 0 handoffs loaded
+Guard            2 reads narrowed · 0 hand-offs · 0 handoffs loaded
 ```
 
 ## 已知限制
 
-- Claude Code 的 hook 不能直接"新开会话"，所以 hard limit 之后还需要你手动 `/clear` 一次，自动化程度大约 95%。
-- 上下文大小取自 transcript 里最近一次主会话请求的 usage，是"当前会话有多大"的准确值，但不包含你即将发送的那条消息本身。
-- 协议规则是给模型的指令，不能 100% 保证被遵守；读取拦截和会话接力是确定性执行的。
+- Claude Code 的 hook 不能直接“新开会话”，所以交接后还需要你手动 `/clear` 一次。
+- 上下文大小取自 transcript 里最近一次主会话请求的 usage。如果 Claude 在一轮里自主跑很久，这一轮可能超过上限很多；这是“不打断”的代价，交接会在这一轮结束时进行。
+- 读取拦截只判断单条简单命令；管道（如 `cat f | grep x`）默认视为已经过滤，直接放行。
+- 行为规范是给模型的指令，不能 100% 保证被遵守；读取拦截和会话交接是确定性执行的。
 
 ## 路线图
 
@@ -164,12 +175,12 @@ claude plugin validate .          # 校验 manifest
 
 ```text
 .claude-plugin/     plugin.json, marketplace.json
-hooks/hooks.json    SessionStart / UserPromptSubmit / PreToolUse
+hooks/hooks.json    SessionStart / UserPromptSubmit / PreToolUse / Stop
 rules/protocol.md   注入的行为协议（约 270 tokens）
-scripts/minctx.js   hook 分发器 + checkpoint CLI
+scripts/minctx.js   hook 分发器 + checkpoint / limit CLI
 scripts/stats.js    会话效率报告
 scripts/lib/        config / transcript / guard / state(handoff)
-skills/             /minctx:checkpoint, /minctx:stats
+skills/             /minctx:checkpoint, /minctx:stats, /minctx:limit
 bench/              A/B benchmark 与任务
 test/               node:test
 ```
