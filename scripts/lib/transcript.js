@@ -161,12 +161,17 @@ function summarize(file) {
         if (!c || c.type !== 'tool_result' || !pending.has(c.tool_use_id)) continue;
         const r = pending.get(c.tool_use_id);
         pending.delete(c.tool_use_id);
-        if ('lines' in r) r.lines = resultText(c.content).split('\n').length;
+        if ('lines' in r) {
+          // A denied or failed Read (e.g. narrowed by the read guard) loaded no file content.
+          if (c.is_error === true) r.failed = true;
+          else r.lines = resultText(c.content).split('\n').length;
+        }
         if ('error' in r) r.error = c.is_error === true;
       }
     }
   }
   s.modified = [...modified];
+  s.reads = s.reads.filter((r) => !r.failed);
   s.tests = s.commands.filter((c) => TEST_RE.test(c.command));
   return s;
 }

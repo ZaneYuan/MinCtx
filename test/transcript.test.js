@@ -61,3 +61,17 @@ test('summarize: prompts, edits, reads, tests, deduped usage', () => {
   assert.strictEqual(s.toolCalls, 3);
   assert.strictEqual(s.contextTokens, 21000);
 });
+
+test('summarize: denied reads do not count as reads', () => {
+  const d = tmpDir();
+  const f = writeTranscript(d, [
+    T.assistant(T.usage(1000), [T.toolUse('r1', 'Read', { file_path: '/p/big.js' })], { id: 'm1' }),
+    T.toolResult('r1', 'MinCtx: big.js has 599 lines\nOutline:\nL1: x', true),
+    T.assistant(T.usage(1200), [T.toolUse('r2', 'Read', { file_path: '/p/big.js', offset: 1, limit: 40 })], { id: 'm2' }),
+    T.toolResult('r2', 'a\nb'),
+  ]);
+  const s = summarize(f);
+  assert.strictEqual(s.reads.length, 1);
+  assert.strictEqual(s.reads[0].lines, 2);
+  assert.strictEqual(s.toolCalls, 2);
+});

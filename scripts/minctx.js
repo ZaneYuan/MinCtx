@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 'use strict';
-// MinCtx hook dispatcher. Usage: minctx.js <session-start|prompt-submit|pre-tool|checkpoint>
+// MinCtx hook dispatcher. Usage: minctx.js <session-start|prompt-submit|pre-tool|checkpoint|limit>
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { loadConfig } = require('./lib/config');
 const { contextTokens } = require('./lib/transcript');
-const { checkRead, checkBash } = require('./lib/guard');
+const { checkRead, checkBash, checkPowerShell } = require('./lib/guard');
 const st = require('./lib/state');
 
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(__dirname, '..');
@@ -130,7 +131,8 @@ function preTool(input, cfg, projectDir) {
   const hit =
     input.tool_name === 'Read' ? checkRead(input.tool_input, cwd, cfg)
       : input.tool_name === 'Bash' ? checkBash(input.tool_input, cwd, cfg)
-        : null;
+        : input.tool_name === 'PowerShell' ? checkPowerShell(input.tool_input, cwd, cfg)
+          : null;
   if (!hit) return;
   const action = cfg.mode === 'shadow' ? 'shadow' : 'deny';
   st.log(projectDir, {
@@ -178,9 +180,37 @@ function checkpoint() {
   console.log('Next: the user runs /clear; the fresh session loads this handoff automatically.');
 }
 
+function parseTokens(s) {
+  const m = /^(\d+(?:\.\d+)?)([km]?)$/i.exec(String(s || '').trim());
+  if (!m) return null;
+  const mult = { '': 1, k: 1e3, m: 1e6 }[m[2].toLowerCase()];
+  return Math.round(Number(m[1]) * mult);
+}
+
+// Usage: minctx.js limit <hard> [soft]. Writes ~/.minctx/config.json; soft defaults to 80% of hard.
+function limit(args) {
+  const hard = parseTokens(args[0]);
+  const soft = args[1] == null ? null : parseTokens(args[1]);
+  if (!hard || hard < 50000 || (args[1] != null && (!soft || soft >= hard))) {
+    console.log('Usage: /minctx:limit <hard> [soft]   e.g. /minctx:limit 450k  or  /minctx:limit 450k 350k');
+    console.log('hard >= 50k; soft < hard (default: 80% of hard).');
+    process.exitCode = 1;
+    return;
+  }
+  const file = path.join(os.homedir(), '.minctx', 'config.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const cur = st.readJson(file, {});
+  cur.rollover = { ...(cur.rollover || {}), hardTokens: hard, softTokens: soft };
+  st.writeJson(file, cur);
+  const eff = loadConfig(findProjectDir(process.cwd()) || process.cwd()).rollover;
+  console.log(`MinCtx: saved to ${file}. Effective here: soft ${k(eff.softTokens)} · hard ${k(eff.hardTokens)}.`);
+  if (eff.hardTokens !== hard) console.log('Note: this project\'s .minctx/config.json overrides the global limit.');
+}
+
 function main() {
   const cmd = process.argv[2];
   if (cmd === 'checkpoint') return checkpoint();
+  if (cmd === 'limit') return limit(process.argv.slice(3));
   const input = readInput();
   const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
   const cfg = loadConfig(projectDir);

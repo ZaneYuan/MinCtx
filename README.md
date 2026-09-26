@@ -15,11 +15,11 @@ Skill 只是"建议"。它能影响 Agent 之后的行为，但拦不住一次�
 | 问题 | 机制 | 实现 | 上下文成本 |
 |---|---|---|---|
 | READ LESS：读得太多 | 先定范围，先搜后读，只读最小范围 | `SessionStart` hook 注入协议（约 270 tokens，每个会话一次） | 极低 |
-| | 硬性拦截大文件的整文件读取，并附上文件大纲 | `PreToolUse` hook（Read、`cat`） | 0，只在拦截时返回提示 |
+| | 硬性拦截大文件的整文件读取，并附上文件大纲 | `PreToolUse` hook（Read、Bash `cat`、PowerShell `Get-Content`） | 0，只在拦截时返回提示 |
 | DO LESS / SAY LESS：做得太多、说得太多 | 最小正确改动（Ponytail 思路）；不说开场白、不复述 diff（Caveman 思路） | 同一份协议 | 同上 |
 | CARRY LESS：背着长会话反复烧 token | 增量维护一份小状态，到阈值自动 checkpoint，再接力到新会话，替代 `/compact` | `UserPromptSubmit` + `SessionStart` hooks | handoff 约 0.5K–2K tokens |
 
-`/minctx:checkpoint` 和 `/minctx:stats` 这两个 skill 设置了 `disable-model-invocation`，平时完全不占上下文。
+`/minctx:checkpoint`、`/minctx:stats` 和 `/minctx:limit` 这几个 skill 设置了 `disable-model-invocation`，平时完全不占上下文。
 
 ## 安装
 
@@ -46,8 +46,8 @@ L2 Disposable       讨论过程 / 失败尝试 / 工具日志 → 直接丢弃�
 具体流程：
 
 1. **过程中**：Agent 在每个里程碑重写 `.minctx/state.md`（不超过 25 行：goal / done / decisions / blockers / next）。这是增量维护，不等到最后才一次性总结。
-2. **Soft limit**（默认 100K）：提醒一次，Agent 会在下一个自然任务边界主动 checkpoint，并建议你 `/clear`。
-3. **Hard limit**（默认 150K）：在你的下一条消息**发出之前**拦截。这条消息不会发送，所以不花钱；同时自动生成 `.minctx/handoff.md`，内容包括：
+2. **Soft limit**（默认为 hard 的 80%，即 360K）：提醒一次，Agent 会在下一个自然任务边界主动 checkpoint，并建议你 `/clear`。
+3. **Hard limit**（默认 450K）：在你的下一条消息**发出之前**拦截。这条消息不会发送，所以不花钱；同时自动生成 `.minctx/handoff.md`，内容包括：
    - state.md（没有 state.md 时，退回使用你发过的原始需求）
    - 本会话修改过的文件列表（不含代码内容）
    - 最后一次测试/构建命令及其结果
@@ -69,8 +69,8 @@ L2 Disposable       讨论过程 / 失败尝试 / 工具日志 → 直接丢弃�
   "readGuard": { "enabled": true, "maxLines": 300, "outlineEntries": 40 },
   "rollover": {
     "enabled": true,
-    "softTokens": 100000,
-    "hardTokens": 150000,
+    "softTokens": null,
+    "hardTokens": 450000,
     "overridePrefix": "++",
     "handoffMaxAgeHours": 24
   },
@@ -79,7 +79,8 @@ L2 Disposable       讨论过程 / 失败尝试 / 工具日志 → 直接丢弃�
 ```
 
 - `mode`：`enforce`（拦截 / 阻止）、`shadow`（只记录"本来会做什么"，完全不改变行为）、`off`
-- 使用 1M 上下文的话，可以设为 `"softTokens": 300000, "hardTokens": 400000`。不过更早接力通常更省额度。
+- 最快的设置方式：`/minctx:limit 450k`（soft 默认取 hard 的 80%），或 `/minctx:limit 450k 350k` 同时指定 soft。写入 `~/.minctx/config.json`，对所有项目生效；项目内 `.minctx/config.json` 优先。
+- 注意：如果模型的 auto-compact 窗口小于 hard limit（例如 200K 窗口的模型），会先触发 Claude Code 自己的压缩，此时应把 hard 设在窗口以下。
 - 所有状态都放在 `<项目>/.minctx/`，这个目录会自动 gitignore 自己。
 
 ## 如何确保"省"得对
@@ -131,7 +132,7 @@ Safe saving: PASS (quality held within 0pp, tokens saved)
 
 ```text
 MinCtx stats · session 6bfa5c84
-Context now      82.1K tokens (soft 100K · hard 150K)
+Context now      82.1K tokens (soft 360K · hard 450K)
 Requests         32
 Input processed  3.47M (new 64 · cache write 111.3K · cache read 3.36M)
 Output           53.1K
@@ -169,7 +170,7 @@ rules/protocol.md   注入的行为协议（约 270 tokens）
 scripts/minctx.js   hook 分发器 + checkpoint CLI
 scripts/stats.js    会话效率报告
 scripts/lib/        config / transcript / guard / state(handoff)
-skills/             /minctx:checkpoint, /minctx:stats
+skills/             /minctx:checkpoint, /minctx:stats, /minctx:limit
 bench/              A/B benchmark 与任务
 test/               node:test
 ```

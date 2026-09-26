@@ -89,4 +89,16 @@ function checkBash(toolInput, cwd, cfg) {
   return { ...hit, reason: hit.reason.replace('re-issue Read', 'use Read') };
 }
 
-module.exports = { checkRead, checkBash, outline, lineInfo };
+// PowerShell equivalents: `Get-Content file`, `gc`, `cat`, `type`, with no -TotalCount/-Head/-Tail or pipeline.
+const PS_RE = /^\s*(?:Get-Content|gc|cat|type)\s+(?:-(?:Path|LiteralPath)\s+)?("[^"]+"|'[^']+'|[^\s|;&<>()$`*?]+)\s*$/i;
+
+function checkPowerShell(toolInput, cwd, cfg) {
+  const m = PS_RE.exec((toolInput && toolInput.command) || '');
+  if (!m) return null;
+  const target = m[1].replace(/^["']|["']$/g, '');
+  const hit = checkRead({ file_path: target }, cwd, cfg);
+  if (!hit) return null;
+  return { ...hit, reason: hit.reason.replace('re-issue Read', 'use Read') };
+}
+
+module.exports = { checkRead, checkBash, checkPowerShell, outline, lineInfo };

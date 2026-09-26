@@ -15,8 +15,9 @@ const DEFAULTS = {
   rollover: {
     enabled: true,
     // Context size (tokens) of the last request. Soft: nudge to checkpoint. Hard: block and hand off.
-    softTokens: 100000,
-    hardTokens: 150000,
+    // softTokens null means 80% of hardTokens.
+    softTokens: null,
+    hardTokens: 450000,
     // Prompts starting with this prefix bypass the hard limit once.
     overridePrefix: '++',
     // A pending handoff older than this is ignored at session start.
@@ -52,6 +53,9 @@ function loadConfig(projectDir) {
   let cfg = merge(DEFAULTS, readJson(path.join(os.homedir(), '.minctx', 'config.json')));
   if (projectDir) cfg = merge(cfg, readJson(path.join(projectDir, '.minctx', 'config.json')));
   if (process.env.MINCTX_MODE) cfg.mode = process.env.MINCTX_MODE;
+  if (cfg.rollover.softTokens == null) {
+    cfg.rollover = { ...cfg.rollover, softTokens: Math.round(cfg.rollover.hardTokens * 0.8) };
+  }
   return cfg;
 }
 

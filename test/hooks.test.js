@@ -56,7 +56,7 @@ test('prompt-submit: below soft limit is silent', () => {
 });
 
 test('prompt-submit: soft limit nudges once per session', () => {
-  const { d, transcript } = project(120000);
+  const { d, transcript } = project(400000);
   const r1 = runHook('prompt-submit', prompt(d, transcript, 'next'), { projectDir: d });
   assert.match(r1.json.systemMessage, /soft limit/);
   assert.match(r1.json.hookSpecificOutput.additionalContext, /minctx\.js" checkpoint/);
@@ -65,12 +65,12 @@ test('prompt-submit: soft limit nudges once per session', () => {
 });
 
 test('prompt-submit: hard limit blocks the prompt and saves a handoff with it', () => {
-  const { d, transcript } = project(160000);
+  const { d, transcript } = project(480000);
   fs.mkdirSync(path.join(d, '.minctx'), { recursive: true });
   fs.writeFileSync(path.join(d, '.minctx', 'state.md'), 'goal: fix delete\nnext: mixed-member test\n');
   const r = runHook('prompt-submit', prompt(d, transcript, 'now add the audit log'), { projectDir: d });
   assert.strictEqual(r.json.decision, 'block');
-  assert.match(r.json.reason, /160K/);
+  assert.match(r.json.reason, /480K/);
   const h = fs.readFileSync(path.join(d, '.minctx', 'handoff.md'), 'utf8');
   assert.match(h, /goal: fix delete/);
   assert.match(h, /now add the audit log/);
@@ -81,7 +81,7 @@ test('prompt-submit: hard limit blocks the prompt and saves a handoff with it', 
 });
 
 test('prompt-submit: slash commands, override prefix and shadow mode are not blocked', () => {
-  const { d, transcript } = project(160000);
+  const { d, transcript } = project(480000);
   assert.strictEqual(runHook('prompt-submit', prompt(d, transcript, '/clear'), { projectDir: d }).stdout, '');
   assert.strictEqual(runHook('prompt-submit', prompt(d, transcript, '++ one more thing'), { projectDir: d }).stdout, '');
   writeConfig(d, { mode: 'shadow' });
@@ -95,8 +95,22 @@ test('prompt-submit: limits are configurable (e.g. 400K on a 1M window)', () => 
   assert.strictEqual(runHook('prompt-submit', prompt(d, transcript, 'go'), { projectDir: d }).stdout, '');
 });
 
+test('limit CLI sets global thresholds; soft defaults to 80% of hard', () => {
+  const { d, transcript } = project(300000);
+  const env = { ...process.env, HOME: d, USERPROFILE: d };
+  const run = (...args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'minctx.js'), 'limit', ...args], { cwd: d, encoding: 'utf8', env });
+
+  assert.strictEqual(run('abc').status, 1);
+  assert.strictEqual(run('300k', '400k').status, 1);
+  const r = run('250k');
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /soft 200K · hard 250K/);
+  const out = runHook('prompt-submit', prompt(d, transcript, 'go'), { projectDir: d });
+  assert.strictEqual(out.json.decision, 'block');
+});
+
 test('session-start: injects protocol, then the pending handoff exactly once', () => {
-  const { d, transcript } = project(160000);
+  const { d, transcript } = project(480000);
   runHook('prompt-submit', prompt(d, transcript, 'now add the audit log', 'OLD'), { projectDir: d });
 
   const s1 = runHook('session-start', { session_id: 'NEW', source: 'clear', cwd: d }, { projectDir: d });
@@ -112,7 +126,7 @@ test('session-start: injects protocol, then the pending handoff exactly once', (
 });
 
 test('session-start: resume is silent; handoff is not re-injected into its own session', () => {
-  const { d, transcript } = project(160000);
+  const { d, transcript } = project(480000);
   runHook('prompt-submit', prompt(d, transcript, 'x', 'S1'), { projectDir: d });
   assert.strictEqual(runHook('session-start', { session_id: 'S1', source: 'resume', cwd: d }, { projectDir: d }).stdout, '');
   const r = runHook('session-start', { session_id: 'S1', source: 'compact', cwd: d }, { projectDir: d });
@@ -126,7 +140,7 @@ test('session-start: .minctx is self-gitignored', () => {
 });
 
 test('mode off disables every hook', () => {
-  const { d, transcript } = project(160000);
+  const { d, transcript } = project(480000);
   const env = { MINCTX_MODE: 'off' };
   assert.strictEqual(runHook('prompt-submit', prompt(d, transcript, 'x'), { projectDir: d, env }).stdout, '');
   assert.strictEqual(runHook('session-start', { session_id: 'S', source: 'startup', cwd: d }, { projectDir: d, env }).stdout, '');
