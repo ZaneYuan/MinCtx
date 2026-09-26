@@ -4,6 +4,7 @@
 
 一个真正能帮你省钱和 token 额度的 Claude Code 插件，输入、输出、使用规范全覆盖。
 核心目标：让你的 agent **只读必要，回得精简，做得适当**。
+不靠繁重的规则约束 agent：约 270 tokens 的方向性规则，加上两处由 hook 强制执行的保障。
 
 ---
 
@@ -27,6 +28,43 @@ Claude Code 每轮请求都会重放完整的会话历史，所以 token 消耗�
 - 旧 transcript 路径：需要某个细节时去检索，不做全量回灌
 
 执行中的轮次永远不会被中断。这一轮的输入已经付过费，所以交接放在轮次结束时进行。
+
+## 设计取舍：给方向，不给枷锁
+
+成熟的 agent 不需要上千行的规则也能把事做好。规则越长，每个会话都要为它付 token，也越容易互相冲突、把 agent 限制死。MinCtx 的做法是：
+
+- **方向靠规则**：会话开始时注入一次约 270 tokens 的协议，只讲方向和原则，具体怎么做交给 agent 判断。
+- **关键处靠强制**：最费 token、且对错可以明确判断的两件事——大文件整读、长会话延续——不依赖 agent 自觉，由 hook 强制执行（见上方原理表）。
+
+### 规则全文
+
+下面是注入给 agent 的全部内容，没有其他隐藏指令（源文件：[`rules/protocol.md`](rules/protocol.md)）：
+
+```text
+MinCtx protocol - fewest tokens, equivalent outcome. Never drop constraints or unresolved info.
+READ LESS
+- Scope first: decide what this task needs; skip the rest (README, architecture, unrelated modules) unless it would change your next action.
+- Search before open: Grep/Glob the symbol, then Read only the relevant range (offset/limit, ~50-150 lines). Expand one hop (callee, interface, model) only when blocked.
+- Don't re-read unchanged content already in context; don't read "for completeness". Filter noisy output (grep/tail, quiet flags, failures only).
+DO LESS
+- Smallest correct change; reuse existing code and deps; no speculative abstractions, refactors or extra files. Stop once solved and verified.
+SAY LESS
+- No preamble, no restating the request, no diff recap. Report what changed, the result, and anything the user must decide. Detail only on request.
+CARRY LESS
+- At milestones (decision made, subtask done, before a risky step) rewrite .minctx/state.md, <=25 lines: goal / done / decisions (+why) / blockers / next. Never copy code or file contents: the repo and git are the memory.
+- After a handoff, trust it plus the repo. If a past detail is missing, Grep the previous transcript it names instead of guessing.
+```
+
+| 原则 | 规则含义 | 为什么 |
+|---|---|---|
+| 总纲 | 用最少的 token 得到等价的结果；绝不丢弃约束和未解决的信息 | 省 token 不能以丢需求为代价 |
+| READ LESS | 先确定任务需要什么；README、架构、无关模块，除非会改变下一步决策，否则不读 | 读进上下文的内容，之后每一轮都会重复计费 |
+| | 先 Grep/Glob 定位，再只读相关的 50–150 行；卡住时才向外扩一层（被调用方、接口、数据模型） | 按需定位，而不是先“理解整个项目” |
+| | 不重复读取已在上下文中且未变化的内容；不“为了完整”而读；命令输出只看失败项或末尾 | 同样的内容不付两次钱 |
+| DO LESS | 最小的正确改动；复用现有代码和依赖；不做推测性的抽象、重构或新增文件；解决并验证后停止 | 多余的改动既耗 token，也扩大出错面和 review 成本 |
+| SAY LESS | 不写开场白，不复述需求，不复述 diff；只报告改了什么、结果如何、需要用户决定什么；细节按需提供 | 输出 token 单价高于输入 |
+| CARRY LESS | 在里程碑处重写 `.minctx/state.md`（≤25 行）：目标 / 已完成 / 决策及原因 / 阻塞 / 下一步；不复制代码或文件内容 | 仓库和 git 本身就是记忆，交接只需携带恢复不出来的信息 |
+| | 交接后以 handoff 和仓库为准；缺少的细节去旧 transcript 中检索，不要猜 | 信息可恢复，不会丢 |
 
 ## 安装
 
@@ -96,7 +134,7 @@ node bench/run.js --runs 3        # 需要已登录的 claude CLI，会产生 AP
 
 只有当 MinCtx 组的通过率不低于 baseline（容差可以用 `--tolerance` 设置），并且 token 总量更低时，结论才是 `Safe saving: PASS`。原始数据写入 `bench/results/`。
 
-目前还没有公开的基准结果。新增任务：`bench/tasks/<name>/{repo/, task.json, <验收测试>}`。
+实际效果因项目和使用习惯而异，欢迎直接尝试：`/minctx:stats` 可以查看当前会话的消耗，对比测试可以量化装与不装的差异。欢迎把结果提交到 [Issues](https://github.com/ZaneYuan/MinCtx/issues)。目前还没有公开的基准结果。新增任务：`bench/tasks/<name>/{repo/, task.json, <验收测试>}`。
 
 ## 限制
 

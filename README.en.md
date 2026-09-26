@@ -4,6 +4,7 @@
 
 A Claude Code plugin that actually saves you money and usage quota, covering input, output and working practice.
 The goal: your agent **reads only what it needs, replies concisely, and does just enough**.
+No heavy rulebook: about 270 tokens of direction, plus two safeguards enforced by hooks.
 
 ---
 
@@ -27,6 +28,43 @@ How this differs from `/compact`: `/compact` turns a long conversation into a sh
 - the previous transcript path, so a detail can be looked up on demand rather than replayed
 
 A running turn is never interrupted. Its input is already paid for, so the hand-off happens at turn end.
+
+## Design: direction, not shackles
+
+A capable agent doesn't need thousands of lines of rules to do good work. Longer rule sets cost tokens in every session, and are more likely to conflict with each other or box the agent in. MinCtx takes a different approach:
+
+- **Direction through rules**: a ~270-token protocol is injected once per session. It states direction and principles and leaves the how to the agent.
+- **Enforcement where it matters**: the two things that cost the most and can be judged unambiguously (whole-file reads of large files, and carrying a long session forward) don't depend on the agent's discretion. Hooks enforce them (see the table above).
+
+### The full rules
+
+This is everything injected into the agent; there are no other hidden instructions (source: [`rules/protocol.md`](rules/protocol.md)):
+
+```text
+MinCtx protocol - fewest tokens, equivalent outcome. Never drop constraints or unresolved info.
+READ LESS
+- Scope first: decide what this task needs; skip the rest (README, architecture, unrelated modules) unless it would change your next action.
+- Search before open: Grep/Glob the symbol, then Read only the relevant range (offset/limit, ~50-150 lines). Expand one hop (callee, interface, model) only when blocked.
+- Don't re-read unchanged content already in context; don't read "for completeness". Filter noisy output (grep/tail, quiet flags, failures only).
+DO LESS
+- Smallest correct change; reuse existing code and deps; no speculative abstractions, refactors or extra files. Stop once solved and verified.
+SAY LESS
+- No preamble, no restating the request, no diff recap. Report what changed, the result, and anything the user must decide. Detail only on request.
+CARRY LESS
+- At milestones (decision made, subtask done, before a risky step) rewrite .minctx/state.md, <=25 lines: goal / done / decisions (+why) / blockers / next. Never copy code or file contents: the repo and git are the memory.
+- After a handoff, trust it plus the repo. If a past detail is missing, Grep the previous transcript it names instead of guessing.
+```
+
+| Principle | Meaning | Why |
+|---|---|---|
+| Overall | Fewest tokens for an equivalent result; never drop constraints or unresolved information | Saving tokens must never cost requirements |
+| READ LESS | Decide what the task needs; skip README, architecture and unrelated modules unless they'd change the next action | Anything read stays in context and is billed again every turn |
+| | Grep/Glob to locate, then read only the relevant 50–150 lines; expand one hop (callee, interface, model) only when blocked | Locate on demand instead of "understanding the whole project" first |
+| | Don't re-read unchanged content; don't read "for completeness"; keep only failures or the tail of command output | Don't pay for the same content twice |
+| DO LESS | Smallest correct change; reuse existing code and dependencies; no speculative abstractions, refactors or extra files; stop once solved and verified | Extra changes cost tokens and widen the surface for bugs and review |
+| SAY LESS | No preamble, no restating the request, no diff recap; report what changed, the result, and anything the user must decide; detail on request | Output tokens cost more than input |
+| CARRY LESS | At milestones, rewrite `.minctx/state.md` (≤25 lines): goal / done / decisions and why / blockers / next; never copy code or file contents | The repo and git are the memory; a handoff carries only what they can't recover |
+| | After a handoff, trust it plus the repo; look up missing details in the previous transcript rather than guess | Nothing is lost for good |
 
 ## Install
 
@@ -96,7 +134,7 @@ node bench/run.js --runs 3        # needs a logged-in claude CLI; incurs API cos
 
 The verdict is `Safe saving: PASS` only if the MinCtx pass rate is no lower than baseline (tolerance set with `--tolerance`) and total tokens are lower. Raw results go to `bench/results/`.
 
-No published benchmark results yet. To add a task: `bench/tasks/<name>/{repo/, task.json, <acceptance test>}`.
+Results vary by project and working style, so try it yourself: `/minctx:stats` shows what the current session is spending, and the benchmark quantifies the difference with and without the plugin. Results are welcome in [Issues](https://github.com/ZaneYuan/MinCtx/issues). No published benchmark results yet. To add a task: `bench/tasks/<name>/{repo/, task.json, <acceptance test>}`.
 
 ## Limitations
 
