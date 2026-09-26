@@ -168,6 +168,10 @@ bench/              A/B benchmark
 
 Roadmap: CLI wrapper for hand-off without `/clear`; more benchmark tasks; tool-output compression.
 
+## Try it
+
+Give it a try. For questions, suggestions or benchmark results, open an [Issue](https://github.com/ZaneYuan/MinCtx/issues) or email [1447596534@qq.com](mailto:1447596534@qq.com).
+
 ## License
 
 [MIT](LICENSE)

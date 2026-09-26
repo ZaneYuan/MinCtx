@@ -168,6 +168,10 @@ bench/              A/B 基准测试
 
 Roadmap：CLI 包装器实现免 `/clear` 交接；扩充基准任务；工具输出压缩。
 
+## 欢迎体验
+
+欢迎试用，使用中的问题、建议或实测数据，可以提交 [Issue](https://github.com/ZaneYuan/MinCtx/issues)，或发邮件联系：[1447596534@qq.com](mailto:1447596534@qq.com)
+
 ## License
 
 [MIT](LICENSE)
