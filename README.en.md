@@ -2,8 +2,14 @@
 
 [中文](README.md) | **English**
 
-A Claude Code plugin that actually saves you money and usage quota, covering input, output and working practice.
-The goal: your agent **reads only what it needs, replies concisely, and does just enough**.
+### A Claude Code plugin that actually saves you money and usage quota
+
+Covers input, output and working practice.
+
+| Reads only what it needs | Replies concisely | Does just enough |
+|:---:|:---:|:---:|
+| Large files read on demand; long sessions handed off | No preamble, no recaps, just results | Smallest correct change, no over-engineering |
+
 No heavy rulebook: about 270 tokens of direction, plus two safeguards enforced by hooks.
 
 ---
