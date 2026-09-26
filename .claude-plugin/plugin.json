@@ -2,6 +2,7 @@
   "name": "minctx",
   "version": "0.1.0",
   "description": "Cut token spend and usage quota across input, output and working practice: the agent reads only what it needs, replies concisely, and does just enough.",
+  "license": "MIT",
   "author": {
     "name": "ZaneYuan"
   },

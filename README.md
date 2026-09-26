@@ -123,3 +123,7 @@ bench/              A/B 基准测试
 ```
 
 Roadmap：CLI 包装器实现免 `/clear` 交接；扩充基准任务；工具输出压缩。
+
+## License
+
+[MIT](LICENSE)

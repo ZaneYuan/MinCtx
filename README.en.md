@@ -123,3 +123,7 @@ bench/              A/B benchmark
 ```
 
 Roadmap: CLI wrapper for hand-off without `/clear`; more benchmark tasks; tool-output compression.
+
+## License
+
+[MIT](LICENSE)
