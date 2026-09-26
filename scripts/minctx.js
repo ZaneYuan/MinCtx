@@ -4,6 +4,7 @@
 // Hooks:  minctx.js <session-start|prompt-submit|pre-tool|stop>   (JSON on stdin)
 // CLI:    minctx.js checkpoint | minctx.js limit [450k|1m|off|on]
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { loadConfig, readJson, parseTokens } = require('./lib/config');
 const { contextTokens } = require('./lib/transcript');
@@ -24,7 +25,7 @@ function emit(obj) {
   process.stdout.write(JSON.stringify(obj));
 }
 
-const k = (n) => `${Math.round(n / 1000)}K`;
+const k = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(2)}M` : `${Math.round(n / 1000)}K`);
 const approxTokens = (s) => Math.ceil(s.length / 3.5);
 
 function remember(projectDir, input) {
@@ -215,45 +216,46 @@ function checkpoint() {
   console.log('Next: run /clear; the fresh session loads this handoff automatically.');
 }
 
-// Show or set this project's hand-off limit: /minctx:limit 450k | 1m | off | on
-function limit(arg) {
+// Show or set the hand-off limit for all projects (~/.minctx/config.json; a project's
+// .minctx/config.json still wins). Usage: limit | limit <hard> [soft] | limit off | limit on
+function limit(args) {
   const projectDir = findProjectDir(process.cwd(), '') || process.cwd();
-  const p = st.ensureDir(projectDir);
-  const file = path.join(p.dir, 'config.json');
+  const file = path.join(os.homedir(), '.minctx', 'config.json');
   const show = () => {
     const r = loadConfig(projectDir).rollover;
-    return r.enabled
-      ? `hand-off at ${k(r.hardTokens)} tokens, heads-up at ${k(r.softTokens)}`
-      : 'automatic hand-off is off';
+    return r.enabled ? `hand-off at ${k(r.hardTokens)} tokens, heads-up at ${k(r.softTokens)}` : 'automatic hand-off is off';
   };
-  const a = String(arg || '').trim().toLowerCase();
-  if (!a) {
-    console.log(`MinCtx: ${show()} (this project). Change with /minctx:limit 450k, 1m, off or on.`);
+  const [a0, a1] = args.map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+  if (!a0) {
+    console.log(`MinCtx: ${show()}. Change with /minctx:limit 450k [360k], or off / on.`);
     return;
   }
   const cur = readJson(file) || {};
   const rollover = { ...(cur.rollover || {}) };
-  if (a === 'off' || a === 'on') {
-    rollover.enabled = a === 'on';
+  if (a0 === 'off' || a0 === 'on') {
+    rollover.enabled = a0 === 'on';
   } else {
-    const n = parseTokens(a);
-    if (!n || n < 20000) {
-      console.log(`MinCtx: "${arg}" is not a valid limit. Use e.g. 150k, 450k or 1m (minimum 20k).`);
+    const hard = parseTokens(a0);
+    const soft = a1 == null ? null : parseTokens(a1);
+    if (!hard || hard < 50000 || (a1 != null && (!soft || soft >= hard))) {
+      console.log('Usage: /minctx:limit <hard> [soft]   e.g. /minctx:limit 450k  or  /minctx:limit 450k 350k  (or off / on)');
+      console.log('hard >= 50k; soft < hard (default: 80% of hard).');
       process.exitCode = 1;
       return;
     }
-    rollover.enabled = true;
-    rollover.hardTokens = n;
-    delete rollover.softTokens; // Heads-up follows the new limit via softRatio.
+    Object.assign(rollover, { enabled: true, hardTokens: hard, softTokens: soft });
   }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   st.writeJson(file, { ...cur, rollover });
-  console.log(`MinCtx: ${show()} (saved to .minctx/config.json).`);
+  console.log(`MinCtx: ${show()} (saved to ${file}).`);
+  const project = readJson(path.join(projectDir, '.minctx', 'config.json'));
+  if (project && project.rollover) console.log("Note: this project's .minctx/config.json overrides parts of the global setting.");
 }
 
 function main() {
   const cmd = process.argv[2];
   if (cmd === 'checkpoint') return checkpoint();
-  if (cmd === 'limit') return limit(process.argv.slice(3).join(' '));
+  if (cmd === 'limit') return limit(process.argv.slice(3));
   const input = readInput();
   const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
   const cfg = loadConfig(projectDir);

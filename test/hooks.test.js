@@ -149,6 +149,20 @@ test('limits are configurable (e.g. 150K on a 200K window)', () => {
   assert.strictEqual(runHook('prompt-submit', prompt(d, transcript, 'go'), { projectDir: d }).json.decision, 'block');
 });
 
+test('limit CLI sets global thresholds; soft defaults to 80% of hard', () => {
+  const { d, transcript } = project(300000);
+  const env = { ...process.env, HOME: d, USERPROFILE: d };
+  const run = (...args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'minctx.js'), 'limit', ...args], { cwd: d, encoding: 'utf8', env });
+
+  assert.strictEqual(run('abc').status, 1);
+  assert.strictEqual(run('300k', '400k').status, 1);
+  const r = run('250k');
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /hand-off at 250K tokens, heads-up at 200K/);
+  const out = runHook('prompt-submit', prompt(d, transcript, 'go'), { projectDir: d });
+  assert.strictEqual(out.json.decision, 'block');
+});
+
 test('session-start: injects protocol, then the pending handoff exactly once', () => {
   const { d, transcript } = project(460000);
   runHook('prompt-submit', prompt(d, transcript, 'now add the audit log', 'OLD'), { projectDir: d });
@@ -227,18 +241,16 @@ test('pre-tool: PowerShell Get-Content of a large file is denied; bounded reads 
   assert.strictEqual(run('Get-Content big.js | Select-String helper').stdout, '');
 });
 
-test('limit CLI shows and sets the per-project hand-off limit', () => {
+test('limit CLI shows, sets soft explicitly, and turns hand-off off/on', () => {
   const d = tmpDir();
-  const run = (...args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'minctx.js'), 'limit', ...args], { cwd: d, encoding: 'utf8', env: { ...process.env, HOME: d } });
+  const run = (...args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'minctx.js'), 'limit', ...args], { cwd: d, encoding: 'utf8', env: { ...process.env, HOME: d, USERPROFILE: d } });
   assert.match(run().stdout, /hand-off at 450K tokens, heads-up at 360K/);
-  assert.match(run('200k').stdout, /hand-off at 200K tokens, heads-up at 160K/);
+  assert.match(run('1m', '700k').stdout, /hand-off at 1M tokens, heads-up at 700K/);
   const cfg = JSON.parse(fs.readFileSync(path.join(d, '.minctx', 'config.json'), 'utf8'));
-  assert.strictEqual(cfg.rollover.hardTokens, 200000);
+  assert.strictEqual(cfg.rollover.hardTokens, 1000000);
   assert.match(run('off').stdout, /automatic hand-off is off/);
-  assert.match(run('on').stdout, /hand-off at 200K/);
-  const bad = run('lots');
-  assert.strictEqual(bad.status, 1);
-  assert.match(bad.stdout, /not a valid limit/);
+  assert.match(run('on').stdout, /hand-off at 1M/);
+  assert.match(run('200k').stdout, /heads-up at 160K/, 'new hard without soft resets heads-up to 80%');
 });
 
 test('stats: reads denied by the guard are not counted as reads', () => {

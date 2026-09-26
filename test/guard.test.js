@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { checkRead, checkBash, outline } = require('../scripts/lib/guard');
+const { checkRead, checkBash, checkPowerShell, outline } = require('../scripts/lib/guard');
 const { DEFAULTS } = require('../scripts/lib/config');
 const { tmpDir, bigFile } = require('./helpers');
 
@@ -56,6 +56,18 @@ test('bash cat of a large file is guarded; pipelines are not', () => {
   assert.strictEqual(checkBash({ command: 'cat big.js | grep helper' }, d, cfg), null);
   assert.strictEqual(checkBash({ command: 'cat a.js b.js' }, d, cfg), null);
   assert.strictEqual(checkBash({ command: 'ls -la' }, d, cfg), null);
+});
+
+test('PowerShell whole-file reads are narrowed; bounded or piped reads pass', () => {
+  const d = tmpDir();
+  bigFile(d, 'big.js', 1000);
+  for (const c of ['Get-Content big.js', 'gc "big.js"', 'type big.js', 'Get-Content -Path big.js', "get-content -LiteralPath 'big.js'"]) {
+    assert.ok(checkPowerShell({ command: c }, d, cfg), c);
+  }
+  assert.match(checkPowerShell({ command: 'Get-Content big.js' }, d, cfg).reason, /use Read with offset/);
+  for (const c of ['Get-Content big.js -TotalCount 50', 'Get-Content big.js | Select-Object -First 20', 'Get-Content small.js', 'Get-ChildItem']) {
+    assert.strictEqual(checkPowerShell({ command: c }, d, cfg), null, c);
+  }
 });
 
 test('outline covers common languages and markdown headings', () => {

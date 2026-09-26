@@ -66,7 +66,7 @@ L2 Disposable       讨论过程 / 失败尝试 / 工具日志 → 直接丢弃�
 
 随时可以手动接力：`/minctx:checkpoint`，然后 `/clear`。
 
-调整上限：`/minctx:limit 450k`（也支持 `1m`、`150k`、`off`、`on`），只对当前项目生效。200K 上下文窗口的模型建议设为 `150k`。
+调整上限：`/minctx:limit 450k`（也支持 `1m`、`150k`、`off`、`on`；不带参数显示当前值），对所有项目生效。200K 上下文窗口的模型建议设为 `150k`。
 
 ## 配置
 
@@ -90,6 +90,8 @@ L2 Disposable       讨论过程 / 失败尝试 / 工具日志 → 直接丢弃�
 
 - `mode`：`enforce`（拦截 / 阻止）、`shadow`（只记录"本来会做什么"，完全不改变行为）、`off`
 - `softTokens` 不写时为 `hardTokens × softRatio`。`refreshState: false` 表示到上限时不让 Claude 更新 state.md，直接用已有信息写 handoff。
+- 最快的设置方式：`/minctx:limit 450k`（heads-up 默认取上限的 80%），或 `/minctx:limit 450k 350k` 同时指定 heads-up。写入 `~/.minctx/config.json`，对所有项目生效；项目内 `.minctx/config.json` 优先。
+- 注意：如果模型的 auto-compact 窗口小于上限（例如 200K 窗口的模型），会先触发 Claude Code 自己的压缩，此时应把上限设在窗口以下，例如 `/minctx:limit 150k`。
 - 所有状态都放在 `<项目>/.minctx/`，这个目录会自动 gitignore 自己。
 
 ## 如何确保"省"得对
