@@ -1,0 +1,14 @@
+{
+  "description": "MinCtx: protocol injection, oversized-read guard, context rollover guard",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/minctx.js\" session-start", "timeout": 10 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/minctx.js\" prompt-submit", "timeout": 15 }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Read|Bash", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/minctx.js\" pre-tool", "timeout": 10 }] }
+    ]
+  }
+}

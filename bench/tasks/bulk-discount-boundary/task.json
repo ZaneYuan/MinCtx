@@ -1,0 +1,6 @@
+{
+  "name": "bulk-discount-boundary",
+  "prompt": "Customers report that an order of exactly $1000 is charged without the 10% bulk discount. Fix it.",
+  "check": ["node", "--test", "check.test.js"],
+  "checkFiles": ["check.test.js"]
+}

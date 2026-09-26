@@ -1,0 +1,12 @@
+{
+  "name": "minctx",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimum-context plugin for Claude Code",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "stats": "node scripts/stats.js",
+    "bench": "node bench/run.js"
+  }
+}

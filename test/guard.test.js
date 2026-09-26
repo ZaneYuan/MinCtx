@@ -1,0 +1,87 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('fs');
+const path = require('path');
+const { checkRead, checkBash, outline } = require('../scripts/lib/guard');
+const { DEFAULTS } = require('../scripts/lib/config');
+const { tmpDir, bigFile } = require('./helpers');
+
+const cfg = DEFAULTS;
+
+test('small files and ranged reads pass', () => {
+  const d = tmpDir();
+  bigFile(d, 'small.js', 100);
+  bigFile(d, 'big.js', 1000);
+  assert.strictEqual(checkRead({ file_path: 'small.js' }, d, cfg), null);
+  assert.strictEqual(checkRead({ file_path: 'big.js', offset: 200, limit: 80 }, d, cfg), null);
+  assert.strictEqual(checkRead({ file_path: 'big.js', limit: 2000 }, d, cfg), null);
+});
+
+test('unbounded read of a large file is narrowed with an outline', () => {
+  const d = tmpDir();
+  const f = bigFile(d, 'big.js', 1000);
+  const hit = checkRead({ file_path: f }, '/', cfg);
+  assert.ok(hit);
+  assert.strictEqual(hit.lines, 1020);
+  assert.match(hit.reason, /1020 lines/);
+  assert.match(hit.reason, /L1: function helper1\(a, b\) \{/);
+  assert.match(hit.reason, /offset: 1, limit: 1020/);
+});
+
+test('binary, image, missing and directory paths pass through', () => {
+  const d = tmpDir();
+  fs.writeFileSync(path.join(d, 'blob.bin'), Buffer.concat([Buffer.from([0, 1, 2]), Buffer.alloc(50000, 10)]));
+  fs.writeFileSync(path.join(d, 'pic.png'), 'x\n'.repeat(5000));
+  assert.strictEqual(checkRead({ file_path: 'blob.bin' }, d, cfg), null);
+  assert.strictEqual(checkRead({ file_path: 'pic.png' }, d, cfg), null);
+  assert.strictEqual(checkRead({ file_path: 'missing.js' }, d, cfg), null);
+  assert.strictEqual(checkRead({ file_path: '.' }, d, cfg), null);
+});
+
+test('maxLines is configurable', () => {
+  const d = tmpDir();
+  bigFile(d, 'mid.js', 250);
+  assert.strictEqual(checkRead({ file_path: 'mid.js' }, d, cfg), null);
+  assert.ok(checkRead({ file_path: 'mid.js' }, d, { ...cfg, readGuard: { ...cfg.readGuard, maxLines: 100 } }));
+});
+
+test('bash cat of a large file is guarded; pipelines are not', () => {
+  const d = tmpDir();
+  bigFile(d, 'big.js', 1000);
+  const hit = checkBash({ command: 'cat big.js' }, d, cfg);
+  assert.ok(hit);
+  assert.match(hit.reason, /use Read with offset/);
+  assert.ok(checkBash({ command: 'cat "big.js"' }, d, cfg));
+  assert.strictEqual(checkBash({ command: 'cat big.js | grep helper' }, d, cfg), null);
+  assert.strictEqual(checkBash({ command: 'cat a.js b.js' }, d, cfg), null);
+  assert.strictEqual(checkBash({ command: 'ls -la' }, d, cfg), null);
+});
+
+test('outline covers common languages and markdown headings', () => {
+  const src = [
+    'using System;',
+    'namespace Crm.Services {',
+    '  public class NeedAnalysisService {',
+    '    public async Task UpdateMembers(Guid id, List<Member> members)',
+    '    {',
+    '      return;',
+    '    }',
+    '  }',
+    '}',
+    'def parse(x):',
+    'export const load = async (p) => {',
+    'fn main() {',
+  ].join('\n');
+  const o = outline(src, 40, '.cs').join('\n');
+  for (const s of ['namespace Crm.Services', 'public class NeedAnalysisService', 'UpdateMembers', 'def parse', 'export const load', 'fn main']) {
+    assert.ok(o.includes(s), `outline missing ${s}:\n${o}`);
+  }
+  assert.ok(!o.includes('return'));
+  assert.deepStrictEqual(outline('# Title\ntext\n## Install\n', 40, '.md'), ['L1: # Title', 'L3: ## Install']);
+});
+
+test('markdown outline skips fenced code blocks', () => {
+  const md = '# A\n```sh\n# not a heading\n```\n## B\n';
+  assert.deepStrictEqual(outline(md, 40, '.md'), ['L1: # A', 'L5: ## B']);
+});

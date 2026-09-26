@@ -1,0 +1,12 @@
+{
+  "name": "minctx",
+  "description": "MinCtx - minimum-context plugin for Claude Code",
+  "owner": { "name": "ZaneYuan" },
+  "plugins": [
+    {
+      "name": "minctx",
+      "source": "./",
+      "description": "Read less, do less, say less, carry less - fewer tokens with equivalent outcomes."
+    }
+  ]
+}
