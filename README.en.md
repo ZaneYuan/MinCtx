@@ -16,14 +16,14 @@ No heavy rulebook: about 270 tokens of direction, plus two safeguards enforced b
 
 ## How it works
 
-Claude Code replays the full conversation on every request, so most token spend is input, and it compounds as a session grows. MinCtx intervenes at three points:
+Claude Code replays the full conversation on every request, so most token spend is input, and it compounds as a session grows. MinCtx intervenes at these points:
 
-| Area | Where the waste comes from | What MinCtx does | Hook |
-|---|---|---|---|
-| Input · reads | Reading a thousand-line file to change one line, then re-sending it every turn | Unbounded reads of files over 300 lines are denied with a line-numbered outline; ranged reads pass | `PreToolUse`: Read, Bash (`cat`/`nl`/`head`/`tail`/`sed -n`), PowerShell (`Get-Content`/`gc`/`type`) |
-| Input · session | Every message in a long session is billed at full context; `/compact` itself reads the full context | At turn end, context size is checked; above the limit a ~1–2K handoff is written and injected after `/clear` | `Stop`, `SessionStart` |
-| Input · session | The next message sent after the limit is reached | Held rather than sent, and folded into the handoff for the new session | `UserPromptSubmit` |
-| Output · behaviour | Verbose replies, over-implementation, exploratory reads | Session protocol (~270 tokens): scope first, search before read, minimal change, no recaps | `SessionStart` |
+| Where the waste comes from | What MinCtx does | Hook |
+|---|---|---|
+| **Reads**: reading a thousand-line file to change one line, then re-sending it every turn | Unbounded reads of files over 300 lines are denied with a line-numbered outline; ranged reads pass. Covers Read; Bash `cat`, `nl`, `head`, `tail`, `sed -n`; PowerShell `Get-Content`, `gc`, `type` | `PreToolUse` |
+| **Long sessions**: every message is billed at full context; `/compact` itself reads the full context | At turn end, context size is checked; above the limit a ~1–2K handoff is written and injected after `/clear` | `Stop`<br>`SessionStart` |
+| **Messages past the limit**: the next message sent after the limit is reached | Held rather than sent, and folded into the handoff for the new session | `UserPromptSubmit` |
+| **Output and behaviour**: verbose replies, over-implementation, exploratory reads | Session protocol (~270 tokens): scope first, search before read, minimal change, no recaps | `SessionStart` |
 
 How this differs from `/compact`: `/compact` turns a long conversation into a shorter one; MinCtx turns it into executable state. Code and git history stay out of the handoff, since the repository is the source of truth. The handoff holds only what the repo can't tell a fresh session:
 
