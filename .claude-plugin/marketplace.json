@@ -1,12 +1,14 @@
 {
   "name": "minctx",
   "description": "MinCtx - minimum-context plugin for Claude Code",
-  "owner": { "name": "ZaneYuan" },
+  "owner": {
+    "name": "ZaneYuan"
+  },
   "plugins": [
     {
       "name": "minctx",
       "source": "./",
-      "description": "Read less, do less, say less, carry less - fewer tokens with equivalent outcomes."
+      "description": "Cut token spend and usage quota across input, output and working practice: the agent reads only what it needs, replies concisely, and does just enough."
     }
   ]
 }

@@ -1,9 +1,17 @@
 {
   "name": "minctx",
   "version": "0.1.0",
-  "description": "Read less, do less, say less, carry less: cut Claude Code token use without changing outcomes. Guards oversized reads and replaces /compact with a tiny state handoff + fresh session.",
-  "author": { "name": "ZaneYuan" },
+  "description": "Cut token spend and usage quota across input, output and working practice: the agent reads only what it needs, replies concisely, and does just enough.",
+  "author": {
+    "name": "ZaneYuan"
+  },
   "homepage": "https://github.com/ZaneYuan/MinCtx",
   "repository": "https://github.com/ZaneYuan/MinCtx",
-  "keywords": ["context", "tokens", "handoff", "rollover", "efficiency"]
+  "keywords": [
+    "context",
+    "tokens",
+    "handoff",
+    "rollover",
+    "efficiency"
+  ]
 }
